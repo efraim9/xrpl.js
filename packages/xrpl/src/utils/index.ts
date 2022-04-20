@@ -21,6 +21,7 @@ import { Response } from '../models/methods'
 import { PaymentChannelClaim } from '../models/transactions/paymentChannelClaim'
 import { Transaction } from '../models/transactions/transaction'
 
+import createCrossChainPayment from './createCrossChainPayment'
 import { deriveKeypair, deriveXAddress } from './derive'
 import getBalanceChanges from './getBalanceChanges'
 import {
@@ -37,6 +38,7 @@ import {
   hashEscrow,
   hashPaymentChannel,
 } from './hashes'
+import parseNFTokenID from './parseNFTokenID'
 import {
   percentToTransferRate,
   decimalToTransferRate,
@@ -46,6 +48,7 @@ import {
   qualityToDecimal,
 } from './quality'
 import signPaymentChannelClaim from './signPaymentChannelClaim'
+import { convertHexToString, convertStringToHex } from './stringConversion'
 import {
   rippleTimeToISOTime,
   isoTimeToRippleTime,
@@ -135,32 +138,6 @@ function isValidAddress(address: string): boolean {
 }
 
 /**
- * Converts a string to its hex equivalent. Useful for Memos.
- *
- * @param string - The string to convert to Hex.
- * @returns The Hex equivalent of the string.
- * @category Utilities
- */
-function convertStringToHex(string: string): string {
-  return Buffer.from(string, 'utf8').toString('hex').toUpperCase()
-}
-
-/**
- * Converts hex to its string equivalent. Useful to read the Domain field and some Memos.
- *
- * @param hex - The hex to convert to a string.
- * @param encoding - The encoding to use. Defaults to 'utf8' (UTF-8). 'ascii' is also allowed.
- * @returns The converted string.
- * @category Utilities
- */
-function convertHexToString(
-  hex: string,
-  encoding: BufferEncoding = 'utf8',
-): string {
-  return Buffer.from(hex, 'hex').toString(encoding)
-}
-
-/**
  * Returns true if there are more pages of data.
  *
  * When there are more results than contained in the response, the response
@@ -238,4 +215,6 @@ export {
   encodeForMultiSigning,
   encodeForSigning,
   encodeForSigningClaim,
+  createCrossChainPayment,
+  parseNFTokenID,
 }
