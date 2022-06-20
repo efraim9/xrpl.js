@@ -2,10 +2,12 @@ export type LedgerIndex = number | ('validated' | 'closed' | 'current')
 
 export type AccountObjectType =
   | 'check'
+  | 'deposit_preauth'
   | 'escrow'
   | 'offer'
   | 'payment_channel'
   | 'signer_list'
+  | 'ticket'
   | 'state'
 
 interface XRP {
@@ -95,7 +97,7 @@ export interface ResponseOnlyTxInfo {
 export interface NFTOffer {
   amount: Amount
   flags: number
-  index: string
+  nft_offer_index: string
   owner: string
   destination?: string
   expiration?: number

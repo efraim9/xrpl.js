@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- There are lots of equivalent constructors which make sense to have here. */
+import BigNumber from 'bignumber.js'
 import { fromSeed } from 'bip32'
 import { mnemonicToSeedSync } from 'bip39'
 import _ from 'lodash'
@@ -5,6 +7,7 @@ import {
   classicAddressToXAddress,
   isValidXAddress,
   xAddressToClassicAddress,
+  encodeSeed,
 } from 'ripple-address-codec'
 import {
   decode,
@@ -21,10 +24,15 @@ import {
 } from 'ripple-keypairs'
 
 import ECDSA from '../ECDSA'
-import { ValidationError } from '../errors'
+import { ValidationError, XrplError } from '../errors'
+import { IssuedCurrencyAmount } from '../models/common'
 import { Transaction } from '../models/transactions'
+import { isIssuedCurrency } from '../models/transactions/common'
+import { isHex } from '../models/utils'
 import { ensureClassicAddress } from '../sugar/utils'
 import { hashSignedTx } from '../utils/hashes/hashLedger'
+
+import { rfc1751MnemonicToKey } from './rfc1751'
 
 const DEFAULT_ALGORITHM: ECDSA = ECDSA.ed25519
 const DEFAULT_DERIVATION_PATH = "m/44'/144'/0'/0/0"
@@ -40,7 +48,7 @@ function hexFromBuffer(buffer: Buffer): string {
  *
  * @example
  * ```typescript
- * // Derive a wallet from a bip38 Mnemonic
+ * // Derive a wallet from a bip39 Mnemonic
  * const wallet = Wallet.fromMnemonic(
  *   'jewel insect retreat jump claim horse second chef west gossip bone frown exotic embark laundry'
  * )
@@ -166,38 +174,6 @@ class Wallet {
   public static fromSecret = Wallet.fromSeed
 
   /**
-   * Derives a wallet from a mnemonic.
-   *
-   * @param mnemonic - A string consisting of words (whitespace delimited) used to derive a wallet.
-   * @param opts - (Optional) Options to derive a Wallet.
-   * @param opts.derivationPath - The path to derive a keypair (publicKey/privateKey) used for mnemonic-to-seed conversion.
-   * @param opts.masterAddress - Include if a Wallet uses a Regular Key Pair. It must be the master address of the account.
-   * @returns A Wallet derived from a mnemonic.
-   * @throws ValidationError if unable to derive private key from mnemonic input.
-   */
-  public static fromMnemonic(
-    mnemonic: string,
-    opts: { masterAddress?: string; derivationPath?: string } = {},
-  ): Wallet {
-    const seed = mnemonicToSeedSync(mnemonic)
-    const masterNode = fromSeed(seed)
-    const node = masterNode.derivePath(
-      opts.derivationPath ?? DEFAULT_DERIVATION_PATH,
-    )
-    if (node.privateKey === undefined) {
-      throw new ValidationError(
-        'Unable to derive privateKey from mnemonic input',
-      )
-    }
-
-    const publicKey = hexFromBuffer(node.publicKey)
-    const privateKey = hexFromBuffer(node.privateKey)
-    return new Wallet(publicKey, `00${privateKey}`, {
-      masterAddress: opts.masterAddress,
-    })
-  }
-
-  /**
    * Derives a wallet from an entropy (array of random numbers).
    *
    * @param entropy - An array of random numbers to generate a seed used to derive a wallet.
@@ -219,6 +195,83 @@ class Wallet {
     return Wallet.deriveWallet(seed, {
       algorithm,
       masterAddress: opts.masterAddress,
+    })
+  }
+
+  /**
+   * Derives a wallet from a bip39 or RFC1751 mnemonic (Defaults to bip39).
+   *
+   * @param mnemonic - A string consisting of words (whitespace delimited) used to derive a wallet.
+   * @param opts - (Optional) Options to derive a Wallet.
+   * @param opts.masterAddress - Include if a Wallet uses a Regular Key Pair. It must be the master address of the account.
+   * @param opts.derivationPath - The path to derive a keypair (publicKey/privateKey). Only used for bip39 conversions.
+   * @param opts.mnemonicEncoding - If set to 'rfc1751', this interprets the mnemonic as a rippled RFC1751 mnemonic like
+   *                          `wallet_propose` generates in rippled. Otherwise the function defaults to bip39 decoding.
+   * @param opts.algorithm - Only used if opts.mnemonicEncoding is 'rfc1751'. Allows the mnemonic to generate its
+   *                         secp256k1 seed, or its ed25519 seed. By default, it will generate the secp256k1 seed
+   *                         to match the rippled `wallet_propose` default algorithm.
+   * @returns A Wallet derived from a mnemonic.
+   * @throws ValidationError if unable to derive private key from mnemonic input.
+   */
+  public static fromMnemonic(
+    mnemonic: string,
+    opts: {
+      masterAddress?: string
+      derivationPath?: string
+      mnemonicEncoding?: 'bip39' | 'rfc1751'
+      algorithm?: ECDSA
+    } = {},
+  ): Wallet {
+    if (opts.mnemonicEncoding === 'rfc1751') {
+      return Wallet.fromRFC1751Mnemonic(mnemonic, {
+        masterAddress: opts.masterAddress,
+        algorithm: opts.algorithm,
+      })
+    }
+    // Otherwise decode using bip39's mnemonic standard
+    const seed = mnemonicToSeedSync(mnemonic)
+    const masterNode = fromSeed(seed)
+    const node = masterNode.derivePath(
+      opts.derivationPath ?? DEFAULT_DERIVATION_PATH,
+    )
+    if (node.privateKey === undefined) {
+      throw new ValidationError(
+        'Unable to derive privateKey from mnemonic input',
+      )
+    }
+
+    const publicKey = hexFromBuffer(node.publicKey)
+    const privateKey = hexFromBuffer(node.privateKey)
+    return new Wallet(publicKey, `00${privateKey}`, {
+      masterAddress: opts.masterAddress,
+    })
+  }
+
+  /**
+   * Derives a wallet from a RFC1751 mnemonic, which is how `wallet_propose` encodes mnemonics.
+   *
+   * @param mnemonic - A string consisting of words (whitespace delimited) used to derive a wallet.
+   * @param opts - (Optional) Options to derive a Wallet.
+   * @param opts.masterAddress - Include if a Wallet uses a Regular Key Pair. It must be the master address of the account.
+   * @param opts.algorithm - The digital signature algorithm to generate an address for.
+   * @returns A Wallet derived from a mnemonic.
+   */
+  private static fromRFC1751Mnemonic(
+    mnemonic: string,
+    opts: { masterAddress?: string; algorithm?: ECDSA },
+  ): Wallet {
+    const seed = rfc1751MnemonicToKey(mnemonic)
+    let encodeAlgorithm: 'ed25519' | 'secp256k1'
+    if (opts.algorithm === ECDSA.ed25519) {
+      encodeAlgorithm = 'ed25519'
+    } else {
+      // Defaults to secp256k1 since that's the default for `wallet_propose`
+      encodeAlgorithm = 'secp256k1'
+    }
+    const encodedSeed = encodeSeed(seed, encodeAlgorithm)
+    return Wallet.fromSeed(encodedSeed, {
+      masterAddress: opts.masterAddress,
+      algorithm: opts.algorithm,
     })
   }
 
@@ -252,6 +305,7 @@ class Wallet {
    * @param multisign - Specify true/false to use multisign or actual address (classic/x-address) to make multisign tx request.
    * @returns A signed transaction.
    * @throws ValidationError if the transaction is already signed or does not encode/decode to same result.
+   * @throws XrplError if the issued currency being signed is XRP ignoring case.
    */
   // eslint-disable-next-line max-lines-per-function -- introduced more checks to support both string and boolean inputs.
   public sign(
@@ -269,13 +323,17 @@ class Wallet {
       multisignAddress = this.classicAddress
     }
 
-    if (transaction.TxnSignature || transaction.Signers) {
+    const tx = { ...transaction }
+
+    if (tx.TxnSignature || tx.Signers) {
       throw new ValidationError(
         'txJSON must not contain "TxnSignature" or "Signers" properties',
       )
     }
 
-    const txToSignAndEncode = { ...transaction }
+    removeTrailingZeros(tx)
+
+    const txToSignAndEncode = { ...tx }
 
     txToSignAndEncode.SigningPubKey = multisignAddress ? '' : this.publicKey
 
@@ -296,8 +354,9 @@ class Wallet {
         this.privateKey,
       )
     }
+
     const serialized = encode(txToSignAndEncode)
-    this.checkTxSerialization(serialized, transaction)
+    this.checkTxSerialization(serialized, tx)
     return {
       tx_blob: serialized,
       hash: hashSignedTx(serialized),
@@ -337,8 +396,9 @@ class Wallet {
    * @param tx - The transaction prior to signing.
    * @throws A ValidationError if the transaction does not have a TxnSignature/Signers property, or if
    * the serialized Transaction desn't match the original transaction.
+   * @throws XrplError if the transaction includes an issued currency which is equivalent to XRP ignoring case.
    */
-  // eslint-disable-next-line class-methods-use-this -- Helper for organization purposes
+  // eslint-disable-next-line class-methods-use-this, max-lines-per-function -- Helper for organization purposes
   private checkTxSerialization(serialized: string, tx: Transaction): void {
     // Decode the serialized transaction:
     const decoded = decode(serialized)
@@ -386,7 +446,47 @@ class Wallet {
 
       return memo
     })
-    if (!_.isEqual(decoded, tx)) {
+
+    if (txCopy.TransactionType === 'NFTokenMint' && txCopy.URI) {
+      if (!isHex(txCopy.URI)) {
+        throw new ValidationError('URI must be a hex value')
+      }
+      txCopy.URI = txCopy.URI.toUpperCase()
+    }
+
+    /* eslint-disable @typescript-eslint/consistent-type-assertions -- We check at runtime that this is safe */
+    Object.keys(txCopy).forEach((key) => {
+      const standard_currency_code_len = 3
+      if (txCopy[key] && isIssuedCurrency(txCopy[key])) {
+        const decodedAmount = decoded[key] as unknown as IssuedCurrencyAmount
+        const decodedCurrency = decodedAmount.currency
+        const txCurrency = (txCopy[key] as IssuedCurrencyAmount).currency
+
+        if (
+          txCurrency.length === standard_currency_code_len &&
+          txCurrency.toUpperCase() === 'XRP'
+        ) {
+          throw new XrplError(
+            `Trying to sign an issued currency with a similar standard code to XRP (received '${txCurrency}'). XRP is not an issued currency.`,
+          )
+        }
+
+        // Standardize the format of currency codes to the 40 byte hex string for comparison
+        const amount = txCopy[key] as IssuedCurrencyAmount
+        if (amount.currency.length !== decodedCurrency.length) {
+          /* eslint-disable-next-line max-depth -- Easier to read with two if-statements */
+          if (decodedCurrency.length === standard_currency_code_len) {
+            decodedAmount.currency = isoToHex(decodedCurrency)
+          } else {
+            /* eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- We need to update txCopy directly */
+            txCopy[key].currency = isoToHex(txCopy[key].currency)
+          }
+        }
+      }
+    })
+    /* eslint-enable @typescript-eslint/consistent-type-assertions -- Done with dynamic checking */
+
+    if (!_.isEqual(decoded, txCopy)) {
       const data = {
         decoded,
         tx,
@@ -423,5 +523,43 @@ function computeSignature(
   }
   return sign(encodeForSigning(tx), privateKey)
 }
+
+/**
+ * Remove trailing insignificant zeros for non-XRP Payment amount.
+ * This resolves the serialization mismatch bug when encoding/decoding a non-XRP Payment transaction
+ * with an amount that contains trailing insignificant zeros; for example, '123.4000' would serialize
+ * to '123.4' and cause a mismatch.
+ *
+ * @param tx - The transaction prior to signing.
+ */
+function removeTrailingZeros(tx: Transaction): void {
+  if (
+    tx.TransactionType === 'Payment' &&
+    typeof tx.Amount !== 'string' &&
+    tx.Amount.value.includes('.') &&
+    tx.Amount.value.endsWith('0')
+  ) {
+    // eslint-disable-next-line no-param-reassign -- Required to update Transaction.Amount.value
+    tx.Amount = { ...tx.Amount }
+    // eslint-disable-next-line no-param-reassign -- Required to update Transaction.Amount.value
+    tx.Amount.value = new BigNumber(tx.Amount.value).toString()
+  }
+}
+
+/**
+ * Convert an ISO code to a hex string representation
+ *
+ * @param iso - A 3 letter standard currency code
+ */
+/* eslint-disable @typescript-eslint/no-magic-numbers -- Magic numbers are from rippleds of currency code encoding */
+function isoToHex(iso: string): string {
+  const bytes = Buffer.alloc(20)
+  if (iso !== 'XRP') {
+    const isoBytes = iso.split('').map((chr) => chr.charCodeAt(0))
+    bytes.set(isoBytes, 12)
+  }
+  return bytes.toString('hex').toUpperCase()
+}
+/* eslint-enable @typescript-eslint/no-magic-numbers -- Only needed in this function */
 
 export default Wallet

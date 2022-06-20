@@ -1,6 +1,6 @@
 import { assert } from 'chai'
 import { decode } from 'ripple-binary-codec/dist'
-import { Transaction } from 'xrpl-local'
+import { NFTokenMint, Payment, Transaction } from 'xrpl-local'
 import ECDSA from 'xrpl-local/ECDSA'
 import Wallet from 'xrpl-local/Wallet'
 
@@ -115,6 +115,32 @@ describe('Wallet', function () {
 
       assert.equal(wallet.publicKey, publicKey)
       assert.equal(wallet.privateKey, privateKey)
+    })
+
+    it('derives a wallet using rfc1751 mnemonic with secp256k1 key', function () {
+      const algorithm = ECDSA.secp256k1
+      const mnemonic =
+        'CAB BETH HANK BIRD MEND SIGN GILD ANY KERN HYDE CHAT STUB'
+      const expectedSeed = 'snVB4iTWYqsWZaj1hkvAy1QzqNbAg'
+      const wallet = Wallet.fromMnemonic(mnemonic, {
+        mnemonicEncoding: 'rfc1751',
+        algorithm,
+      })
+
+      assert.equal(wallet.seed, expectedSeed)
+    })
+
+    it('derives a wallet using rfc1751 mnemonic with ed25519 key', function () {
+      const algorithm = ECDSA.ed25519
+      const mnemonic =
+        'CAB BETH HANK BIRD MEND SIGN GILD ANY KERN HYDE CHAT STUB'
+      const expectedSeed = 'sEdVaw4m9W3H3ou3VnyvDwvPAP5BEz1'
+      const wallet = Wallet.fromMnemonic(mnemonic, {
+        mnemonicEncoding: 'rfc1751',
+        algorithm,
+      })
+
+      assert.equal(wallet.seed, expectedSeed)
     })
 
     it('derives a wallet using a Regular Key Pair', function () {
@@ -275,6 +301,7 @@ describe('Wallet', function () {
     })
   })
 
+  // eslint-disable-next-line max-statements -- Required for test coverage.
   describe('sign', function () {
     let wallet: Wallet
 
@@ -562,6 +589,218 @@ describe('Wallet', function () {
       assert.throws(() => {
         wallet.sign(payment)
       }, /^1.1234567 is an illegal amount/u)
+    })
+
+    const issuedCurrencyPayment: Transaction = {
+      TransactionType: 'Payment',
+      Account: 'r9cZA1mLK5R5Am25ArfXFmqgNwjZgnfk59',
+      Destination: 'rQ3PTWGLCbPz8ZCicV5tCX3xuymojTng5r',
+      Amount: {
+        currency: 'foo',
+        issuer: 'rnURbz5HLbvqEq69b1B4TX6cUTNMmcrBqi',
+        value: '123.40',
+      },
+      Flags: 2147483648,
+      Sequence: 23,
+      LastLedgerSequence: 8819954,
+      Fee: '12',
+    }
+
+    it('lowercase standard currency code signs successfully', async function () {
+      const payment: Payment = { ...issuedCurrencyPayment }
+      payment.Amount = {
+        currency: 'foo',
+        issuer: 'rnURbz5HLbvqEq69b1B4TX6cUTNMmcrBqi',
+        value: '123.40',
+      }
+
+      assert.deepEqual(wallet.sign(payment), {
+        tx_blob:
+          '12000022800000002400000017201B008694F261D504625103A72000000000000000000000000000666F6F00000000002E099DD75FDD96EB4A603037844F964832FED86B68400000000000000C732102A8A44DB3D4C73EEEE11DFE54D2029103B776AA8A8D293A91D645977C9DF5F54474473045022100D32EBD44F86FB6D0BE239A410B62A73A8B0C26CE3767321913D6FB7BE6FAC2410220430C011C25091DA9CD75E7C99BE406572FBB57B92132E39B4BF873863E744E2E81145E7B112523F68D2F5E879DB4EAC51C6698A693048314FDB08D07AAA0EB711793A3027304D688E10C3648',
+        hash: 'F822EA1D7B2A3026E4654A9152896652C3843B5690F8A56C4217CB4690C5C95A',
+      })
+    })
+
+    it('issued currency in standard or hex format signs to the same transaction', async function () {
+      const payment: Payment = { ...issuedCurrencyPayment }
+      payment.Amount = {
+        currency: '***',
+        issuer: 'rnURbz5HLbvqEq69b1B4TX6cUTNMmcrBqi',
+        value: '123.40',
+      }
+
+      const payment2: Payment = { ...issuedCurrencyPayment }
+      payment2.Amount = {
+        currency: '0000000000000000000000002A2A2A0000000000',
+        issuer: 'rnURbz5HLbvqEq69b1B4TX6cUTNMmcrBqi',
+        value: '123.40',
+      }
+
+      assert.deepEqual(wallet.sign(payment), wallet.sign(payment2))
+    })
+
+    it('sign throws when a payment contains an issued currency like XRP', async function () {
+      const payment: Payment = { ...issuedCurrencyPayment }
+      payment.Amount = {
+        currency: 'xrp',
+        issuer: 'rnURbz5HLbvqEq69b1B4TX6cUTNMmcrBqi',
+        value: '123.40',
+      }
+      assert.throws(() => {
+        wallet.sign(payment)
+      }, /^Trying to sign an issued currency with a similar standard code to XRP \(received 'xrp'\)\. XRP is not an issued currency\./u)
+    })
+
+    it('sign does NOT throw when a payment contains an issued currency like xrp in hex string format', async function () {
+      const payment: Payment = { ...issuedCurrencyPayment }
+      payment.Amount = {
+        currency: '0000000000000000000000007872700000000000',
+        issuer: 'rnURbz5HLbvqEq69b1B4TX6cUTNMmcrBqi',
+        value: '123.40',
+      }
+      assert.deepEqual(wallet.sign(payment), {
+        tx_blob:
+          '12000022800000002400000017201B008694F261D504625103A7200000000000000000000000000078727000000000002E099DD75FDD96EB4A603037844F964832FED86B68400000000000000C732102A8A44DB3D4C73EEEE11DFE54D2029103B776AA8A8D293A91D645977C9DF5F5447446304402202CD2BE27480860765B1B8DB6C499D299734C533F4FFA66317E46D1ADE5181EB7022066D2C65B975A6A9FEE56AB55211D5F2F65D6F988C8280019211874D11771A05D81145E7B112523F68D2F5E879DB4EAC51C6698A693048314FDB08D07AAA0EB711793A3027304D688E10C3648',
+        hash: '1FEAA7894E507E36D73F60DED89852CE28994366879BC7D3D806E4C50D10B1EE',
+      })
+    })
+
+    it('sign succeeds with standard currency code with symbols', async function () {
+      const payment: Payment = { ...issuedCurrencyPayment }
+      payment.Amount = {
+        currency: '***',
+        issuer: 'rnURbz5HLbvqEq69b1B4TX6cUTNMmcrBqi',
+        value: '123.40',
+      }
+      const result = wallet.sign(payment)
+      const expectedResult = {
+        tx_blob:
+          '12000022800000002400000017201B008694F261D504625103A720000000000000000000000000002A2A2A00000000002E099DD75FDD96EB4A603037844F964832FED86B68400000000000000C732102A8A44DB3D4C73EEEE11DFE54D2029103B776AA8A8D293A91D645977C9DF5F54474463044022073E71588750C3D47D7D9A541F00FB897823DA67ED198D0A74404B6FE6D5E4AB5022021BE798D4159F375EBE13D0545F50EE864DF834D5A9F9A31504212156A57934C81145E7B112523F68D2F5E879DB4EAC51C6698A693048314FDB08D07AAA0EB711793A3027304D688E10C3648',
+        hash: '95BF9931C1EA164960FE13A504D5FBAEB1E072C1D291D75B85BA3F22A50346DF',
+      }
+
+      assert.deepEqual(result, expectedResult)
+    })
+
+    it('sign succeeds with non-standard 3 digit currency code', async function () {
+      const payment: Payment = { ...issuedCurrencyPayment }
+      payment.Amount = {
+        currency: ':::',
+        issuer: 'rnURbz5HLbvqEq69b1B4TX6cUTNMmcrBqi',
+        value: '123.40',
+      }
+      const result = wallet.sign(payment)
+      const expectedResult = {
+        tx_blob:
+          '12000022800000002400000017201B008694F261D504625103A720000000000000000000000000003A3A3A00000000002E099DD75FDD96EB4A603037844F964832FED86B68400000000000000C732102A8A44DB3D4C73EEEE11DFE54D2029103B776AA8A8D293A91D645977C9DF5F5447446304402205952993DB235D3A6398E2CB5F91D7F0AD9067F02CB8E62FD335C516B64130F4702206777746CC516F95F39ADDD62CD395AF2F6BAFCCA355B5D23B9B4D9358474A11281145E7B112523F68D2F5E879DB4EAC51C6698A693048314FDB08D07AAA0EB711793A3027304D688E10C3648',
+        hash: 'CE80072E6D70932BC7AA698B931BCF97B6CC3DD3984E08DF284B74E8CB4E543A',
+      }
+
+      assert.deepEqual(result, expectedResult)
+    })
+
+    it('sign handles non-XRP amount with a trailing zero', async function () {
+      const payment: Transaction = {
+        TransactionType: 'Payment',
+        Account: 'r9cZA1mLK5R5Am25ArfXFmqgNwjZgnfk59',
+        Destination: 'rQ3PTWGLCbPz8ZCicV5tCX3xuymojTng5r',
+        Amount: {
+          currency: 'FOO',
+          issuer: 'rnURbz5HLbvqEq69b1B4TX6cUTNMmcrBqi',
+          value: '123.40',
+        },
+        Flags: 2147483648,
+        Sequence: 23,
+        LastLedgerSequence: 8819954,
+        Fee: '12',
+      }
+      const result = wallet.sign(payment)
+      const expectedResult = {
+        tx_blob:
+          '12000022800000002400000017201B008694F261D504625103A72000000000000000000000000000464F4F00000000002E099DD75FDD96EB4A603037844F964832FED86B68400000000000000C732102A8A44DB3D4C73EEEE11DFE54D2029103B776AA8A8D293A91D645977C9DF5F5447446304402206EBFC9B8061C3F82D521506CE62B6BBA99995B2175BFE0E1BC516775932AECEB0220172B9CE9C0EFB3F4870E19B79B4E817DD376E5785F034AB792708F92282C65F781145E7B112523F68D2F5E879DB4EAC51C6698A693048314FDB08D07AAA0EB711793A3027304D688E10C3648',
+        hash: '6235E5A3CC14DB97F75CAE2A4B5AA9B4134B7AD48D7DD8C15473D81631435FE4',
+      }
+
+      assert.deepEqual(result, expectedResult)
+    })
+
+    it('sign handles non-XRP amount with trailing zeros', async function () {
+      const payment: Transaction = {
+        TransactionType: 'Payment',
+        Account: 'r9cZA1mLK5R5Am25ArfXFmqgNwjZgnfk59',
+        Destination: 'rQ3PTWGLCbPz8ZCicV5tCX3xuymojTng5r',
+        Amount: {
+          currency: 'FOO',
+          issuer: 'rnURbz5HLbvqEq69b1B4TX6cUTNMmcrBqi',
+          value: '123.000',
+        },
+        Flags: 2147483648,
+        Sequence: 23,
+        LastLedgerSequence: 8819954,
+        Fee: '12',
+      }
+      const result = wallet.sign(payment)
+      const expectedResult = {
+        tx_blob:
+          '12000022800000002400000017201B008694F261D5045EADB112E000000000000000000000000000464F4F00000000002E099DD75FDD96EB4A603037844F964832FED86B68400000000000000C732102A8A44DB3D4C73EEEE11DFE54D2029103B776AA8A8D293A91D645977C9DF5F54474473045022100C0C77D7D6D6453F0C5EDFF61DE60B5D3D6952C8F30D51543560936D72FA103B00220258CBFCEAC4D2DB5CC2B9417EB46225943E9F4B92944B303ADB810002530BFFB81145E7B112523F68D2F5E879DB4EAC51C6698A693048314FDB08D07AAA0EB711793A3027304D688E10C3648',
+        hash: 'FADCD5EE33C01103AA129FCF0923637D543DB56250CD57A1A308EC386A211CBB',
+      }
+
+      assert.deepEqual(result, expectedResult)
+    })
+
+    it('sign allows lowercase hex value for NFTokenMint.URI', async function () {
+      const tx: NFTokenMint = {
+        TransactionType: 'NFTokenMint',
+        Account: wallet.address,
+        TransferFee: 314,
+        NFTokenTaxon: 0,
+        Flags: 8,
+        Fee: '10',
+        URI: '697066733a2f2f62616679626569676479727a74357366703775646d37687537367568377932366e6634646675796c71616266336f636c67747179353566627a6469',
+        Memos: [
+          {
+            Memo: {
+              MemoType:
+                '687474703a2f2f6578616d706c652e636f6d2f6d656d6f2f67656e65726963',
+              MemoData: '72656e74',
+            },
+          },
+        ],
+      }
+      const result = wallet.sign(tx)
+      const expectedResult = {
+        tx_blob:
+          '12001914013A2200000008202A0000000068400000000000000A732102A8A44DB3D4C73EEEE11DFE54D2029103B776AA8A8D293A91D645977C9DF5F5447446304402203795B6E9D6D0086FB26E2C6B7A8C02D50B8560D45C9D5C80DF271D3349515E5302203B0898A7D8C06243D7C2116D2011ACB68DF3123BB7336D6C27269FD388C12CC07542697066733A2F2F62616679626569676479727A74357366703775646D37687537367568377932366E6634646675796C71616266336F636C67747179353566627A64698114B3263BD0A9BF9DFDBBBBD07F536355FF477BF0E9F9EA7C1F687474703A2F2F6578616D706C652E636F6D2F6D656D6F2F67656E657269637D0472656E74E1F1',
+        hash: '2F359B3CFD1CE6D7BFB672F8ADCE98FE964B1FD04CFC337177FB3D8FBE889788',
+      }
+
+      assert.deepEqual(result, expectedResult)
+    })
+
+    it('sign throws when NFTokenMint.URI is not a hex value', async function () {
+      const tx: NFTokenMint = {
+        TransactionType: 'NFTokenMint',
+        Account: wallet.address,
+        TransferFee: 314,
+        NFTokenTaxon: 0,
+        Flags: 8,
+        Fee: '10',
+        URI: 'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf4dfuylqabf3oclgtqy55fbzdi',
+        Memos: [
+          {
+            Memo: {
+              MemoType:
+                '687474703a2f2f6578616d706c652e636f6d2f6d656d6f2f67656e65726963',
+              MemoData: '72656e74',
+            },
+          },
+        ],
+      }
+
+      assert.throws(() => {
+        wallet.sign(tx)
+      }, /URI must be a hex value/u)
     })
   })
 

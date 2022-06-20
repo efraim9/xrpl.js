@@ -3,6 +3,42 @@
 Subscribe to [the **xrpl-announce** mailing list](https://groups.google.com/g/xrpl-announce) for release announcements. We recommend that xrpl.js (ripple-lib) users stay up-to-date with the latest stable release.
 
 ## Unreleased
+### Fixed
+* Signing tx with standard currency codes with lowercase and allowed symbols causing an error on decode.
+
+### Added
+* When connected to nft-devnet, Client.fundWallet now defaults to using the nft-devnet faucet instead of requiring specification.
+
+## 2.3.0 (2022-06-02)
+### Added
+* Sourcemap generation for browser bundle
+* Exported the AccountOffer interface
+
+### Fixed
+* Client.disconnect() now stops the heartbeat health check as well
+* Updated dependencies which had a warning when running `npm audit`
+* Infinite error/reconnect in browser if an exception was raised during the initial websocket connection event
+* Errors during reliable submission with no error message now properly show the preliminary result instead of a type error
+* Fixed serialize/deserialize verification bug in `Wallet.sign()` when signing a non-XRP Payment with an amount that contains trailing insignificant zeros
+* Allow lowercase hex values for `NFTokenMint.URI`
+
+## 2.2.3 (2022-05-04)
+### Fixed
+* Fixed fromMnemonic having no way to decode mnemonics from rippled's `wallet_propose` method
+
+## 2.2.2 (2022-05-02)
+### Added
+* Export deriveAddress from ripple-keypairs in xrpl.js
+* Deprecated BroadcastClient as it does not solve the reliable connection problem
+
+### Fixed
+* Added missing `Owner` field to NFTokenBurn type definition
+* Changed `tfSellToken` to `tfSellNFToken` to match the 1.9.0 naming for NFTokenSellOffers
+* Add missing filter types in AccountObjectType
+
+## 2.2.1 (2022-04-21)
+### Fixed
+* Fix return field of NFT offer
 
 ## 2.2.0 (2022-04-19)
 ### Added
@@ -13,7 +49,7 @@ Subscribe to [the **xrpl-announce** mailing list](https://groups.google.com/g/xr
 ### Fixed
 * Type of TrustSet transaction edited, specifically LimitAmount property type (fixed typescript issue)
 * Remove unnecessary console.warn for partial payments (#1783, #1784, #1896)
-* Matched 1.9.0's breaking changes to NFT fields.
+* Matched 1.9.0's breaking changes to NFT fields
 
 ## 2.1.1 (2021-12-23)
 ### Fixed
